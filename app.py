@@ -3,65 +3,77 @@ import fitz  # PyMuPDF
 import io
 
 # Set up page configurations
-st.set_page_config(page_title="Geometric PDF Reader", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Universal Layout OCR Reader", page_icon="📄", layout="wide")
 
-st.title("📄 Geometric Boundary-Sorted PDF Extractor")
-st.write("Extracts actual text values by sorting every visual text block strictly by its physical top-to-bottom and left-to-right coordinates.")
+st.title("📄 Universal Layout & OCR Geometric Extractor")
+st.write("Extracts actual text values from **both selectable and scanned image PDFs** by sorting text zones strictly by spatial coordinates.")
 st.divider()
 
 # File Uploader
-uploaded_file = st.file_uploader("Upload your PDF file", type=["pdf"])
+uploaded_file = st.file_uploader("Upload your PDF file (Native or Scanned)", type=["pdf"])
 
 if uploaded_file is not None:
     file_bytes = uploaded_file.read()
     
-    st.subheader("📝 Extracted Content (Physical Layout Sorting)")
+    st.subheader("📝 Extracted Text (Sorted Geometric Layout)")
     
-    with st.spinner("Extracting and sorting layout blocks..."):
+    with st.spinner("Analyzing document layers and running OCR if needed..."):
         try:
-            # Open PDF from in-memory bytes
+            # Open PDF from bytes
             doc = fitz.open(stream=file_bytes, filetype="pdf")
             full_document_output = []
             
             for page_num, page in enumerate(doc):
                 full_document_output.append(f"=== PAGE {page_num + 1} ===")
                 
-                # Get text structural blocks: returns a list of tuples containing coordinate details
-                # Block format: (x0, y0, x1, y1, "text inside the block", block_no, block_type)
+                # Check if the page has native text. If not, trigger OCR via Tesseract automatically
+                text_check = page.get_text().strip()
+                
+                if not text_check:
+                    # Page is a scanned image. Use PyMuPDF's built-in Tesseract OCR engine mapping
+                    # "tp" extracts text positions via layout analysis
+                    try:
+                        pix = page.get_pixmap(dpi=150)
+                        ocr_doc = fitz.open("pdf", pix.pdfocr_tobytes())
+                        page = ocr_doc[0]
+                    except Exception as ocr_err:
+                        full_document_output.append(f"[OCR Engine Error: Ensure packages.txt includes tesseract-ocr. Details: {ocr_err}]")
+                        continue
+
+                # Get spatial text blocks: (x0, y0, x1, y1, "text string", block_no, block_type)
                 blocks = page.get_text("blocks")
                 
                 if not blocks:
-                    full_document_output.append("[No text detected on this page - it might be an un-OCR'd scanned image]")
+                    full_document_output.append("[Empty block configuration detected on this page]")
                     continue
                 
-                # Sort blocks: Primary sort by vertical position (y0), Secondary sort by horizontal position (x0)
-                # Setting an alignment threshold (rounding) helps group elements that sit on roughly the same horizontal level
+                # Group text blocks strictly by their physical top-to-bottom (y0) and left-to-right (x0) layout
+                # Rounding coordinate integers prevents minor micro-misalignments from breaking sentence sequences
                 sorted_blocks = sorted(blocks, key=lambda b: (round(b[1], 1), b[0]))
                 
                 page_text_lines = []
                 for b in sorted_blocks:
-                    block_text = b[4].strip()  # Index 4 holds the actual string text value
+                    block_text = b[4].strip() # Index 4 contains the extracted string value
                     if block_text:
                         page_text_lines.append(block_text)
-                
-                # Join the sorted text lines for the current page
+                        
                 full_document_output.append("\n\n".join(page_text_lines))
                 
             # Compile text across all pages
             final_extracted_text = "\n\n\n".join(full_document_output)
             
-            # Display text in a clean monospace code box to hold layout spacing
+            # Display text inside a code container to respect structural alignment and lines
             st.code(final_extracted_text, language="text")
             
-            # Download Button for the cleaned text content
+            # Download Button
             st.download_button(
-                label="📥 Download Sorted Text File",
+                label="📥 Download Extracted Layout & OCR Text",
                 data=final_extracted_text,
-                file_name="sorted_layout_output.txt",
+                file_name="universal_ocr_layout_output.txt",
                 mime="text/plain"
             )
             
         except Exception as e:
-            st.error(f"Failed to process text coordinates: {e}")
+            st.error(f"Processing structural layout pipeline failed: {e}")
 else:
-    st.info("Upload a PDF file to begin extracting visual blocks.")
+    st.info("Upload any document to process structural character recognition.")
