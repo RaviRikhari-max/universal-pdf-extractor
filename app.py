@@ -1,76 +1,67 @@
 import streamlit as st
-import pdfplumber
+import fitz  # PyMuPDF
 import io
 
 # Set up page configurations
-st.set_page_config(page_title="Visual PDF Extractor", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Geometric PDF Reader", page_icon="📄", layout="wide")
 
-st.title("📄 Visual PDF Snapshot Extractor")
-st.write("Extracts text exactly how it visually looks on the PDF page, ignoring the PDF's internal reading order boundaries.")
+st.title("📄 Geometric Boundary-Sorted PDF Extractor")
+st.write("Extracts actual text values by sorting every visual text block strictly by its physical top-to-bottom and left-to-right coordinates.")
 st.divider()
 
 # File Uploader
-uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
+uploaded_file = st.file_uploader("Upload your PDF file", type=["pdf"])
 
 if uploaded_file is not None:
     file_bytes = uploaded_file.read()
     
-    st.subheader("🤖 Visual Match Output Preview")
-    st.info("Text below is grouped and printed strictly by its vertical and horizontal coordinates on the page.")
+    st.subheader("📝 Extracted Content (Physical Layout Sorting)")
     
-    with st.spinner("Mapping visual layout coordinates..."):
+    with st.spinner("Extracting and sorting layout blocks..."):
         try:
-            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                full_text_blocks = []
-                
-                for page_num, page in enumerate(pdf.pages):
-                    full_text_blocks.append(f"--- VISUAL PAGE {page_num + 1} ---")
-                    
-                    # Extract words with their exact spatial coordinates (x0, y0, text)
-                    words = page.extract_words()
-                    
-                    if not words:
-                        continue
-                        
-                    # Group words into lines that share roughly the same vertical alignment (y-coordinate)
-                    # We round the top coordinate to group words on the exact same text line
-                    lines = {}
-                    for w in words:
-                        # Rounding to 0 decimals forces words on the same line to stay together
-                        y_coordinate = round(w['top'], 0) 
-                        
-                        if y_coordinate not in lines:
-                            lines[y_coordinate] = []
-                        lines[y_coordinate].append(w)
-                    
-                    # Sort lines from the top of the page down to the bottom
-                    sorted_y = sorted(lines.keys())
-                    
-                    page_output = []
-                    for y in sorted_y:
-                        # For each line, sort the words strictly from left to right
-                        line_words = sorted(lines[y], key=lambda w: w['x0'])
-                        
-                        # Reconstruct the line text exactly as it visually sits from left to right
-                        line_text = " ".join([w['text'] for w in line_words])
-                        page_output.append(line_text)
-                        
-                    full_text_blocks.append("\n".join(page_output))
-                
-                final_visual_text = "\n\n".join(full_text_blocks)
+            # Open PDF from in-memory bytes
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            full_document_output = []
             
-            # Display text in a code frame to respect line breaks and raw horizontal alignment
-            st.code(final_visual_text, language="text")
+            for page_num, page in enumerate(doc):
+                full_document_output.append(f"=== PAGE {page_num + 1} ===")
+                
+                # Get text structural blocks: returns a list of tuples containing coordinate details
+                # Block format: (x0, y0, x1, y1, "text inside the block", block_no, block_type)
+                blocks = page.get_text("blocks")
+                
+                if not blocks:
+                    full_document_output.append("[No text detected on this page - it might be an un-OCR'd scanned image]")
+                    continue
+                
+                # Sort blocks: Primary sort by vertical position (y0), Secondary sort by horizontal position (x0)
+                # Setting an alignment threshold (rounding) helps group elements that sit on roughly the same horizontal level
+                sorted_blocks = sorted(blocks, key=lambda b: (round(b[1], 1), b[0]))
+                
+                page_text_lines = []
+                for b in sorted_blocks:
+                    block_text = b[4].strip()  # Index 4 holds the actual string text value
+                    if block_text:
+                        page_text_lines.append(block_text)
+                
+                # Join the sorted text lines for the current page
+                full_document_output.append("\n\n".join(page_text_lines))
+                
+            # Compile text across all pages
+            final_extracted_text = "\n\n\n".join(full_document_output)
             
-            # Download button for the visual matched output
+            # Display text in a clean monospace code box to hold layout spacing
+            st.code(final_extracted_text, language="text")
+            
+            # Download Button for the cleaned text content
             st.download_button(
-                label="📥 Download Visual Layout Text File",
-                data=final_visual_text,
-                file_name="visual_snapshot_layout.txt",
+                label="📥 Download Sorted Text File",
+                data=final_extracted_text,
+                file_name="sorted_layout_output.txt",
                 mime="text/plain"
             )
             
         except Exception as e:
-            st.error(f"Error parsing layout coordinates: {e}")
+            st.error(f"Failed to process text coordinates: {e}")
 else:
-    st.info("Upload your PDF to isolate the visual layout alignment.")
+    st.info("Upload a PDF file to begin extracting visual blocks.")
